@@ -23,7 +23,20 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if ($imageStore.view !== "viewing") return;
-    if (event.key === "ArrowRight" || event.key === " ") {
+    // Ignore shortcuts while typing in a text field or when the settings panel is open
+    const target = event.target as HTMLElement | null;
+    if (
+      showSettings ||
+      target?.closest("input, textarea, select, [contenteditable]")
+    ) {
+      return;
+    }
+    if (event.key === "d" || event.key === "D") {
+      // Plain "d" only; leave modifier combinations (e.g. Ctrl+D) alone
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      event.preventDefault();
+      imageStore.deleteCurrent();
+    } else if (event.key === "ArrowRight" || event.key === " ") {
       event.preventDefault();
       imageStore.next();
     } else if (event.key === "ArrowLeft") {
