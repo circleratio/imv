@@ -4,22 +4,26 @@
   let {
     canOperate,
     canGoPrev,
+    canUndo,
     remaining,
     recentPaths,
     onPick,
     onPrev,
     onNext,
     onDelete,
+    onUndo,
     onOpenSettings,
   }: {
     canOperate: boolean;
     canGoPrev: boolean;
+    canUndo: boolean;
     remaining: number;
     recentPaths: string[];
     onPick: (path: string) => void;
     onPrev: () => void;
     onNext: () => void;
     onDelete: () => void;
+    onUndo: () => void;
     onOpenSettings: () => void;
   } = $props();
 
@@ -116,6 +120,7 @@
     <button type="button" disabled={!canGoPrev} onclick={onPrev}>前へ</button>
     <button type="button" disabled={!canOperate} onclick={onNext}>次へ</button>
     <button type="button" disabled={!canOperate} onclick={onDelete}>削除</button>
+    <button type="button" disabled={!canUndo} title="直近の削除を取り消す (u)" onclick={onUndo}>取り消し</button>
     {#if canOperate}
       <span class="count">残り {remaining} 枚</span>
     {/if}

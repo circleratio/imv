@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { imageStore } from "$lib/stores/imageStore";
   import { trashDirStore } from "$lib/stores/trashDirStore";
   import { recentPathsStore } from "$lib/stores/recentPathsStore";
@@ -30,30 +31,31 @@
     ) {
       return;
     }
+    const view = $imageStore.view;
     const plainKey = !(event.ctrlKey || event.altKey || event.metaKey);
-    // Undo is also available from the empty state (e.g. after deleting the last image)
-    if ((event.key === "u" || event.key === "U") && plainKey) {
-      if ($imageStore.view === "viewing" || $imageStore.view === "empty") {
-        event.preventDefault();
-        imageStore.undoDelete();
+    // Letter shortcuts ignore modifier combinations (e.g. Ctrl+D) and are case-insensitive
+    const letter = plainKey && event.key.length === 1 ? event.key.toLowerCase() : null;
+
+    let action: (() => void) | null = null;
+    if (letter === "q") {
+      // Quit is available in every view
+      action = () => invoke("exit_app");
+    } else if (letter === "u") {
+      // Undo is also available from the empty state (e.g. after deleting the last image)
+      if (view === "viewing" || view === "empty") action = () => imageStore.undoDelete();
+    } else if (view === "viewing") {
+      if (event.key === "ArrowRight" || event.key === " " || letter === "l") {
+        action = () => imageStore.next();
+      } else if (event.key === "ArrowLeft" || letter === "h") {
+        action = () => imageStore.prev();
+      } else if (event.key === "Delete" || letter === "d") {
+        action = () => imageStore.deleteCurrent();
       }
-      return;
     }
-    if ($imageStore.view !== "viewing") return;
-    if (event.key === "d" || event.key === "D") {
-      // Plain "d" only; leave modifier combinations (e.g. Ctrl+D) alone
-      if (!plainKey) return;
+
+    if (action) {
       event.preventDefault();
-      imageStore.deleteCurrent();
-    } else if (event.key === "ArrowRight" || event.key === " ") {
-      event.preventDefault();
-      imageStore.next();
-    } else if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      imageStore.prev();
-    } else if (event.key === "Delete") {
-      event.preventDefault();
-      imageStore.deleteCurrent();
+      action();
     }
   }
 </script>
@@ -64,12 +66,15 @@
   <CommandBar
     canOperate={$imageStore.view === "viewing"}
     canGoPrev={$imageStore.view === "viewing" && $imageStore.position > 0}
+    canUndo={($imageStore.view === "viewing" || $imageStore.view === "empty") &&
+      $imageStore.undoStack.length > 0}
     remaining={$imageStore.files.length}
     recentPaths={$recentPathsStore.paths}
     onPick={handlePick}
     onPrev={() => imageStore.prev()}
     onNext={() => imageStore.next()}
     onDelete={() => imageStore.deleteCurrent()}
+    onUndo={() => imageStore.undoDelete()}
     onOpenSettings={() => (showSettings = true)}
   />
 

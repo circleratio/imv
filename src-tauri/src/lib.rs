@@ -6,6 +6,12 @@ use scan::scan_images;
 use settings::{add_recent_path, get_recent_paths, get_trash_dir, set_trash_dir};
 use trash::{move_to_trash, restore_from_trash};
 
+/// Exits the application (used by the "q" keyboard shortcut).
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -18,7 +24,8 @@ pub fn run() {
             get_trash_dir,
             set_trash_dir,
             get_recent_paths,
-            add_recent_path
+            add_recent_path,
+            exit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
