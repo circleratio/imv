@@ -56,6 +56,17 @@ npm run check   # 型チェック（svelte-check）
 cargo test      # Rustバックエンドのユニットテスト（src-tauri ディレクトリ内で実行）
 ```
 
+## アプリアイコン
+
+元画像は `app-icon.png`（1024×1024）で、`tools/make_icon.py` で描画しています。変更する場合は以下で再生成します。
+
+```sh
+python tools/make_icon.py app-icon.png   # 元画像を生成（Pillow が必要）
+npm run tauri icon app-icon.png          # src-tauri/icons 配下の各サイズを生成
+```
+
+`tauri icon` は Android / iOS 用のアイコンも生成しますが、本アプリでは使わないため `src-tauri/icons/android`・`src-tauri/icons/ios` は削除してください。
+
 ## ドキュメント
 
 - [requirement.md](./requirement.md): 要件定義
