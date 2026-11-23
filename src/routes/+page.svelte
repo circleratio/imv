@@ -22,7 +22,6 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if ($imageStore.view !== "viewing") return;
     // Ignore shortcuts while typing in a text field or when the settings panel is open
     const target = event.target as HTMLElement | null;
     if (
@@ -31,9 +30,19 @@
     ) {
       return;
     }
+    const plainKey = !(event.ctrlKey || event.altKey || event.metaKey);
+    // Undo is also available from the empty state (e.g. after deleting the last image)
+    if ((event.key === "u" || event.key === "U") && plainKey) {
+      if ($imageStore.view === "viewing" || $imageStore.view === "empty") {
+        event.preventDefault();
+        imageStore.undoDelete();
+      }
+      return;
+    }
+    if ($imageStore.view !== "viewing") return;
     if (event.key === "d" || event.key === "D") {
       // Plain "d" only; leave modifier combinations (e.g. Ctrl+D) alone
-      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      if (!plainKey) return;
       event.preventDefault();
       imageStore.deleteCurrent();
     } else if (event.key === "ArrowRight" || event.key === " ") {

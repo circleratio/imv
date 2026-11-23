@@ -26,6 +26,28 @@ pub fn move_to_trash(path: String) -> Result<String, String> {
     Ok(dest.to_string_lossy().to_string())
 }
 
+/// Restores a file previously moved by `move_to_trash` back to its original location.
+/// Fails if the trashed file is missing or a file already exists at the original path.
+#[tauri::command]
+pub fn restore_from_trash(trashed_path: String, original_path: String) -> Result<String, String> {
+    let source = Path::new(&trashed_path);
+    if !source.exists() {
+        return Err(format!("トラッシュ内にファイルが存在しません: {}", trashed_path));
+    }
+    let dest = Path::new(&original_path);
+    if dest.exists() {
+        return Err(format!("復元先に同名のファイルが既に存在します: {}", original_path));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("復元先フォルダの作成に失敗しました: {}", e))?;
+    }
+
+    fs::rename(source, dest).map_err(|e| format!("ファイルの復元に失敗しました: {}", e))?;
+
+    Ok(original_path)
+}
+
 fn unique_destination(dir: &Path, file_name: &Path) -> PathBuf {
     let candidate = dir.join(file_name);
     if !candidate.exists() {
@@ -95,5 +117,42 @@ mod tests {
         assert!(dest.starts_with(trash_dir.to_string_lossy().as_ref()));
 
         fs::remove_file(&dest).ok();
+    }
+
+    #[test]
+    fn restore_from_trash_moves_file_back_to_original_path() {
+        let unique_name = format!("imv-restore-cmd-test-{}.png", std::process::id());
+        let source = std::env::temp_dir().join(&unique_name);
+        fs::write(&source, b"x").unwrap();
+        let original = source.to_string_lossy().to_string();
+
+        let trashed = move_to_trash(original.clone()).unwrap();
+        let restored = restore_from_trash(trashed.clone(), original.clone()).unwrap();
+
+        assert_eq!(restored, original);
+        assert!(source.exists());
+        assert!(!Path::new(&trashed).exists());
+
+        fs::remove_file(&source).ok();
+    }
+
+    #[test]
+    fn restore_from_trash_fails_when_original_path_is_occupied() {
+        let dir = std::env::temp_dir().join(format!("imv-restore-test-c-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let trashed = dir.join("trashed.jpg");
+        let original = dir.join("original.jpg");
+        fs::write(&trashed, b"x").unwrap();
+        fs::write(&original, b"y").unwrap();
+
+        let result = restore_from_trash(
+            trashed.to_string_lossy().to_string(),
+            original.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(trashed.exists());
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

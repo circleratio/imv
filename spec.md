@@ -75,6 +75,7 @@ imv/
 |---|---|---|---|
 | `scan_images` | `path: String`（ファイル or ディレクトリの絶対パス） | `Result<Vec<String>, String>` | 対象の基準ディレクトリを決定し、配下（サブディレクトリ含む）を再帰的に走査。対応拡張子のファイル絶対パス一覧を返す |
 | `move_to_trash` | `path: String`（削除対象ファイルの絶対パス） | `Result<String, String>` | ファイルを設定済みのトラッシュフォルダへ移動する。移動後の実際のパスを返す |
+| `restore_from_trash` | `trashed_path: String`, `original_path: String` | `Result<String, String>` | トラッシュへ移動したファイルを元のパスへ戻す（削除の取り消し）。復元後のパスを返す |
 | `get_trash_dir` | なし | `Result<String, String>` | 現在設定されているトラッシュフォルダのパスを返す（未設定時はデフォルト値） |
 | `set_trash_dir` | `path: String`（新しいトラッシュフォルダの絶対パス） | `Result<(), String>` | トラッシュフォルダの保存先を設定ファイルに永続化する |
 | `get_recent_paths` | なし | `Result<Vec<String>, String>` | 最近開いたフォルダ/ファイルのパス一覧を新しい順に返す |
@@ -95,6 +96,11 @@ imv/
    - 例: `photo.jpg` が衝突 → `photo_1.jpg` → それも衝突していれば `photo_2.jpg` ...
 3. `std::fs::rename` でファイルを移動する（同一ドライブ内を想定。将来的に異なるドライブ間移動が必要になった場合は copy＋delete にフォールバックする）。
 4. 元のフォルダ階層は保持しない（トラッシュ内はフラット構成）。
+
+### 3.3.1 `restore_from_trash` 仕様
+1. `trashed_path`（`move_to_trash` が返した移動後パス）が存在しなければエラーを返す。
+2. `original_path` に既にファイルが存在する場合は上書きせずエラーを返す。
+3. 復元先の親フォルダが存在しなければ作成し、`std::fs::rename` で元の場所へ戻す。
 
 ### 3.4 エラーハンドリング
 - パスが存在しない、権限がない、移動に失敗した等のケースは `Err(String)` としてメッセージをフロントエンドへ返し、フロントエンドはトースト等でエラーを表示する（画面遷移は行わない）。
@@ -156,7 +162,8 @@ interface ImageState {
   history: string[];      // 表示した画像パスの履歴（前へ/次へで辿る）
   position: number;       // history内で現在表示している位置
   current: string | null; // 表示中のファイルパス（= history[position]）
-  error: string | null;   // scan_images / move_to_trash 失敗時のメッセージ
+  error: string | null;   // scan_images / move_to_trash / restore_from_trash 失敗時のメッセージ
+  undoStack: { original: string; trashed: string }[]; // 取り消し可能な削除（新しいものが末尾）
 }
 ```
 - `pickRandom(files)`: `files` からランダムに1件選ぶ（要件3.3のとおり、直前と同じ画像が再度選ばれることを許容する）。
@@ -164,7 +171,8 @@ interface ImageState {
 - `loadFrom(path)`: `scan_images` を invoke → 0件なら `empty`、それ以外はランダムに1件選び `history=[それ]`, `position=0` として `viewing` へ。成功時は `true`、失敗時は `false` を返す（呼び出し元がこれを見て最近使ったパスの記録要否を判断する）。
 - `next()`: `history.slice(0, position + 1)`（現在位置までの履歴）を基点に `pushRandom` する。「前へ」で戻った後に「次へ」を押した場合、それより先の履歴（先読み分）は破棄され、新しいランダム画像が積まれる。
 - `prev()`: `position > 0` なら `position` を1つ戻し、`current` を `history[position]` に更新する（履歴自体は変更しない）。先頭では何もしない。
-- `deleteCurrent()`: `move_to_trash` を invoke → 成功したら `files` から対象を除去し、`history.slice(0, position)`（削除した現在位置より前）を基点に `pushRandom` する。削除した画像は履歴からも取り除かれ、`files` が空なら空状態へ遷移する。
+- `deleteCurrent()`: `move_to_trash` を invoke → 成功したら `files` から対象を除去し、`history.slice(0, position)`（削除した現在位置より前）を基点に `pushRandom` する。削除した画像は履歴からも取り除かれ、`files` が空なら空状態へ遷移する。元のパスと移動後のパスを `undoStack` に積む。
+- `undoDelete()`: `undoStack` の末尾を取り出し `restore_from_trash` を invoke → 成功したら `files` に戻し、`history.slice(0, position + 1)` の末尾に復元した画像を積んで表示する（空状態からでも `viewing` に戻る）。失敗時はエラーを表示し `undoStack` は変更しない。`undoStack` は `loadFrom` / `reset` でクリアする（永続化しない）。
 
 `trashDirStore.ts`
 ```ts
@@ -193,6 +201,9 @@ interface RecentPathsState {
 | `←` | 前へ |
 | `→` または `Space` | 次へ |
 | `Delete` または `d` | 削除 |
+| `u` | 直近の削除を取り消す（表示中・空状態のどちらでも有効。複数回さかのぼれる） |
+
+設定パネル表示中、およびテキスト入力欄にフォーカスがある間はショートカットを無効にする。
 
 ### 4.5 ウィンドウ仕様（要件5-3への回答）
 - 初期サイズ: 1024×768、リサイズ可能。
@@ -282,7 +293,7 @@ sequenceDiagram
 | 5-1 | トラッシュ内の同名ファイル衝突 | 連番サフィックス付与（`_1`, `_2`...）。デフォルト置き場は `~/tmp/Trash`、設定画面から変更可能・永続化 |
 | 5-2 | 走査時の除外条件 | 隠しファイル/隠しディレクトリのみ除外 |
 | 5-3 | ウィンドウ仕様 | 初期1024×768・リサイズ可、拡大縮小/パン操作は無し |
-| 5-4 | 操作方法 | マウス（コマンドバー）＋キーボードショートカット（←=前へ, →/Space=次へ, Delete・d=削除） |
+| 5-4 | 操作方法 | マウス（コマンドバー）＋キーボードショートカット（←=前へ, →/Space=次へ, Delete・d=削除, u=削除の取り消し） |
 | 5-5 | 対象0件時の挙動 | 空状態画面を表示 |
 | 5-6 | 全削除後の挙動 | 空状態画面を表示（フォルダ再選択可） |
 | 5-7 | 状態の永続化 | 行わない（毎回選択し直す） |

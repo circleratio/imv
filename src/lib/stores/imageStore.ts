@@ -10,6 +10,13 @@ interface ImageState {
   position: number;
   current: string | null;
   error: string | null;
+  /** Deleted files that can be restored, most recent last. */
+  undoStack: TrashedEntry[];
+}
+
+interface TrashedEntry {
+  original: string;
+  trashed: string;
 }
 
 function pickRandom(files: string[]): string | null {
@@ -25,6 +32,7 @@ const emptyState: ImageState = {
   position: -1,
   current: null,
   error: null,
+  undoStack: [],
 };
 
 function createImageStore() {
@@ -35,13 +43,14 @@ function createImageStore() {
     position: -1,
     current: null,
     error: null,
+    undoStack: [],
   });
 
   /** historyBase の末尾に新しいランダム画像を積んで表示する。 */
   function pushRandom(state: ImageState, historyBase: string[]): ImageState {
     const next = pickRandom(state.files);
     if (next === null) {
-      return { ...emptyState };
+      return { ...emptyState, undoStack: state.undoStack };
     }
     const history = [...historyBase, next];
     return {
@@ -73,6 +82,7 @@ function createImageStore() {
           position: 0,
           current: first,
           error: null,
+          undoStack: [],
         });
         return true;
       } catch (e) {
@@ -83,6 +93,7 @@ function createImageStore() {
           position: -1,
           current: null,
           error: String(e),
+          undoStack: [],
         });
         return false;
       }
@@ -109,12 +120,49 @@ function createImageStore() {
       if (!target) return;
 
       try {
-        await invoke<string>("move_to_trash", { path: target });
+        const trashed = await invoke<string>("move_to_trash", { path: target });
         update((state) => {
           const files = state.files.filter((f) => f !== target);
+          const undoStack = [...state.undoStack, { original: target!, trashed }];
           // 削除された画像は履歴からも取り除く（それ以降の先読み履歴も破棄する）
           const historyBase = state.history.slice(0, state.position);
-          return pushRandom({ ...state, files }, historyBase);
+          return pushRandom({ ...state, files, undoStack }, historyBase);
+        });
+      } catch (e) {
+        update((state) => ({ ...state, error: String(e) }));
+      }
+    },
+
+    /** 直近の削除を取り消し、復元した画像を表示する。 */
+    async undoDelete() {
+      let entry: TrashedEntry | undefined;
+      update((state) => {
+        entry = state.undoStack[state.undoStack.length - 1];
+        return state;
+      });
+      if (!entry) return;
+      const { original, trashed } = entry;
+
+      try {
+        await invoke<string>("restore_from_trash", {
+          trashedPath: trashed,
+          originalPath: original,
+        });
+        update((state) => {
+          const undoStack = state.undoStack.slice(0, -1);
+          const files = state.files.includes(original) ? state.files : [...state.files, original];
+          // Show the restored image as the newest history entry (discarding forward history)
+          const history = [...state.history.slice(0, state.position + 1), original];
+          return {
+            ...state,
+            view: "viewing",
+            files,
+            history,
+            position: history.length - 1,
+            current: original,
+            error: null,
+            undoStack,
+          };
         });
       } catch (e) {
         update((state) => ({ ...state, error: String(e) }));
@@ -122,7 +170,15 @@ function createImageStore() {
     },
 
     reset() {
-      set({ view: "picking", files: [], history: [], position: -1, current: null, error: null });
+      set({
+        view: "picking",
+        files: [],
+        history: [],
+        position: -1,
+        current: null,
+        error: null,
+        undoStack: [],
+      });
     },
   };
 }
